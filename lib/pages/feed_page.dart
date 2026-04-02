@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../models/post.dart';
 import '../services/post_service.dart';
 import '../services/firestore_user_service.dart';
 import '../services/user_preferences_service.dart';
-import '../services/algorithm_service.dart';
 import '../user/user_profile.dart';
 import '../data/mock_posts.dart';
 import 'algorithm_insights_page.dart';

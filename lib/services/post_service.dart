@@ -62,7 +62,7 @@ class PostService {
         .snapshots()
         .map((snapshot) {
       List<Post> todosPosts = snapshot.docs.map((doc) {
-        return Post.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
+        return Post.fromFirestore(doc.data(), doc.id);
       }).toList();
 
       if (preferencias == null || preferencias.isEmpty) {
