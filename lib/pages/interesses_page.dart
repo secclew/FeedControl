@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // importa para pegar o usuário logado
 
 class InteressesPage extends StatefulWidget {
   const InteressesPage({super.key});
@@ -24,9 +25,18 @@ class _InteressesPageState extends State<InteressesPage> {
   Future<void> _salvarPreferencias() async {
     if (_selecionados.isEmpty) return;
 
+    final user = FirebaseAuth.instance.currentUser; // pega usuário logado
+    if (user == null) {
+      // se não houver login, não salva
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Você precisa estar logado para salvar.')),
+      );
+      return;
+    }
+
     await FirebaseFirestore.instance
         .collection('preferencias')
-        .doc('usuario_teste')
+        .doc(user.uid) // usa o UID como ID do documento
         .set({
       'categorias': _selecionados.toList(),
     });
@@ -104,5 +114,6 @@ class _InteressesPageState extends State<InteressesPage> {
     );
   }
 }
+
 
 

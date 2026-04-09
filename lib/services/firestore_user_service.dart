@@ -1,74 +1,80 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:developer' as developer;
 
 class FirestoreUserService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  /// Retorna o UID de forma segura. 
-  /// Usamos '?' para não quebrar o app caso o Firebase ainda esteja carregando o usuário.
+  /// Retorna o UID do usuário logado de forma segura
   String? get uid => FirebaseAuth.instance.currentUser?.uid;
 
-  /// 🔥 SALVAR PREFERÊNCIAS DO ALGORITMO
+  /// 🔥 SALVAR PREFERÊNCIAS
+  /// Usa SetOptions(merge: false) para que, ao salvar, categorias antigas 
+  /// ou repetidas sejam removidas, mantendo apenas as atuais da UI.
   Future<void> salvarPreferencias(Map<String, double> preferencias) async {
     final userUid = uid;
-    
-    // Se o usuário não estiver logado, interrompemos a função silenciosamente
     if (userUid == null) {
-      print("Aviso: Tentativa de salvar preferências sem usuário logado.");
+      developer.log("Tentativa de salvar sem usuário logado", name: "FirestoreUserService");
       return;
     }
 
     try {
-      await _db.collection("users").doc(userUid).set({
-        "preferencias": preferencias,
-      }, SetOptions(merge: true));
+      // Salvamos na coleção raiz 'preferencias' para bater com as Rules de segurança
+      await _db.collection("preferencias").doc(userUid).set(
+        preferencias, 
+        SetOptions(merge: false), 
+      );
+      developer.log("✅ Preferências salvas com sucesso!", name: "FirestoreUserService");
     } catch (e) {
-      print("Erro ao salvar preferências no Firestore: $e");
+      developer.log("❌ Erro ao salvar preferências", error: e, name: "FirestoreUserService");
     }
   }
 
   /// 🔥 CARREGAR PREFERÊNCIAS
+  /// Corrigido para evitar o erro de 'JSArray': validamos se cada campo é um número.
   Future<Map<String, double>?> carregarPreferencias() async {
     final userUid = uid;
-    
-    // Se não houver usuário, retornamos null imediatamente para evitar o crash
     if (userUid == null) return null;
 
     try {
-      final doc = await _db.collection("users").doc(userUid).get();
+      final doc = await _db.collection("preferencias").doc(userUid).get();
 
-      if (!doc.exists) return null;
-
-      final data = doc.data();
-
-      // Verifica se o documento tem o campo 'preferencias'
-      if (data == null || !data.containsKey("preferencias") || data["preferencias"] == null) {
+      if (!doc.exists || doc.data() == null) {
+        developer.log("Documento de preferências não encontrado.", name: "FirestoreUserService");
         return null;
       }
 
-      final prefs = Map<String, dynamic>.from(data["preferencias"]);
+      final data = doc.data() as Map<String, dynamic>;
+      Map<String, double> mapaLimpo = {};
 
-      // Garante que todos os valores sejam convertidos para double com segurança
-      return prefs.map((key, value) {
-        return MapEntry(key, (value as num).toDouble());
+      data.forEach((key, value) {
+        // Validação crucial: o valor deve ser um número (int ou double)
+        // Se o Firestore retornar uma lista [ ] ou nulo por erro, o app ignora e não crasha.
+        if (value is num) {
+          mapaLimpo[key] = value.toDouble();
+        } else {
+          developer.log("⚠️ Valor inválido ignorado para a categoria '$key': $value", name: "FirestoreUserService");
+        }
       });
+
+      return mapaLimpo;
     } catch (e) {
-      print("Erro ao carregar preferências do Firestore: $e");
+      developer.log("❌ Erro ao carregar preferências", error: e, name: "FirestoreUserService");
       return null;
     }
   }
 
-  /// 🔥 RESETAR PREFERÊNCIAS (Útil para o seu botão de Reset Total)
+  /// 🔥 RESETAR PREFERÊNCIAS
+  /// Remove o documento do usuário, fazendo com que o feed volte ao estado padrão.
   Future<void> resetarPreferencias() async {
     final userUid = uid;
     if (userUid == null) return;
 
     try {
-      await _db.collection("users").doc(userUid).update({
-        "preferencias": {},
-      });
+      await _db.collection("preferencias").doc(userUid).delete();
+      developer.log("♻️ Preferências resetadas (documento excluído).", name: "FirestoreUserService");
     } catch (e) {
-      print("Erro ao resetar preferências: $e");
+      developer.log("❌ Erro ao resetar preferências", error: e, name: "FirestoreUserService");
     }
   }
 }

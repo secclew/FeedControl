@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart'; // necessário para kIsWeb
+import 'package:flutter/foundation.dart';
+import '../services/post_service.dart';
 
 class CreatePostPage extends StatefulWidget {
   const CreatePostPage({super.key});
@@ -14,27 +14,19 @@ class CreatePostPage extends StatefulWidget {
 }
 
 class _CreatePostPageState extends State<CreatePostPage> {
-  final TextEditingController textoController = TextEditingController();
+  final TextEditingController tituloController = TextEditingController(); // ✅ Renomeado para clareza
+  final TextEditingController descricaoController = TextEditingController(); // ✅ Novo: Campo de Descrição
+  final TextEditingController urlController = TextEditingController(); 
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-
-  String? imagemSelecionada;
+  final PostService _postService = PostService();
 
   final ImagePicker _picker = ImagePicker();
   File? _imagemSelecionadaFile;
-  XFile? _imagemSelecionadaXFile; // ✅ usado para Web
+  XFile? _imagemSelecionadaXFile;
 
   String categoriaSelecionada = "tecnologia";
-
   final List<String> categorias = [
-    "tecnologia",
-    "ciencia",
-    "politica",
-    "programacao",
-    "economia",
-    "ia",
-    "startups",
+    "tecnologia", "ciencia", "politica", "programacao", "economia", "ia", "startups",
   ];
 
   bool _loading = false;
@@ -42,10 +34,10 @@ class _CreatePostPageState extends State<CreatePostPage> {
   /// 📸 SELECIONAR IMAGEM
   Future<void> selecionarImagem() async {
     final XFile? imagem = await _picker.pickImage(source: ImageSource.gallery);
-
     if (imagem != null) {
       setState(() {
         _imagemSelecionadaXFile = imagem;
+        urlController.clear(); 
         if (!kIsWeb) {
           _imagemSelecionadaFile = File(imagem.path);
         }
@@ -54,173 +46,166 @@ class _CreatePostPageState extends State<CreatePostPage> {
   }
 
   /// ☁️ UPLOAD FIREBASE STORAGE
-  Future<String> uploadImagem() async {
-    final ref = FirebaseStorage.instance
-        .ref()
-        .child('posts')
-        .child(DateTime.now().millisecondsSinceEpoch.toString());
+  Future<String?> uploadImagem() async {
+    try {
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('posts')
+          .child('${DateTime.now().millisecondsSinceEpoch}.jpg');
 
-    if (kIsWeb && _imagemSelecionadaXFile != null) {
-      // ✅ Upload direto do XFile no Web
-      await ref.putData(await _imagemSelecionadaXFile!.readAsBytes());
-    } else if (_imagemSelecionadaFile != null) {
-      await ref.putFile(_imagemSelecionadaFile!);
+      if (kIsWeb && _imagemSelecionadaXFile != null) {
+        await ref.putData(await _imagemSelecionadaXFile!.readAsBytes());
+      } else if (_imagemSelecionadaFile != null) {
+        await ref.putFile(_imagemSelecionadaFile!);
+      }
+      return await ref.getDownloadURL();
+    } catch (e) {
+      debugPrint("❌ Erro no Storage: $e");
+      return null; 
     }
-
-    return await ref.getDownloadURL();
   }
 
   /// 🚀 PUBLICAR POST
   Future<void> publicarPost() async {
-    if (textoController.text.isEmpty) {
+    if (tituloController.text.trim().isEmpty || descricaoController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Preencha o texto")),
+        const SnackBar(content: Text("Preencha o título e a descrição!")),
       );
       return;
     }
 
-    setState(() {
-      _loading = true;
-    });
+    setState(() => _loading = true);
 
     try {
-      String uid = _auth.currentUser!.uid;
-      String? urlImagem;
+      String? urlFinal;
 
-      // Só faz upload se houver imagem
-      if (_imagemSelecionadaFile != null || _imagemSelecionadaXFile != null) {
-        urlImagem = await uploadImagem();
+      if (urlController.text.trim().isNotEmpty) {
+        urlFinal = urlController.text.trim();
+      } 
+      else if (_imagemSelecionadaXFile != null || _imagemSelecionadaFile != null) {
+        urlFinal = await uploadImagem();
       }
 
-      await _firestore.collection("posts").add({
-        "autor": uid,
-        "titulo": textoController.text.trim(),
-        "categoria": categoriaSelecionada.toLowerCase(), // ✅ normalizado
-        "imagem": urlImagem ?? "",
-        "likes": 0,
-        "engajamento": 0.1,
-        "recencia": 1.0,
-        "timestamp": FieldValue.serverTimestamp(),
-      });
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Post publicado com sucesso 🚀"),
-          backgroundColor: Colors.green,
-        ),
+      // ✅ Enviando Título E Descrição para o Service
+      await _postService.criarPost(
+        tituloController.text.trim(),
+        descricaoController.text.trim(), // ✅ Novo parâmetro
+        categoriaSelecionada,
+        urlFinal ?? "", 
       );
 
+      if (!mounted) return;
       Navigator.pop(context);
+      
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Erro ao publicar: $e")),
       );
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
-
-    setState(() {
-      _loading = false;
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Criar Post")),
+      appBar: AppBar(title: const Text("Criar Publicação")),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            /// TEXTO
+            // 1️⃣ TÍTULO
             TextField(
-              controller: textoController,
-              maxLines: 4,
+              controller: tituloController,
               decoration: const InputDecoration(
-                labelText: "O que você quer compartilhar?",
+                labelText: "Título Chamativo",
+                hintText: "Ex: O avanço da IA em 2026",
                 border: OutlineInputBorder(),
               ),
             ),
+            const SizedBox(height: 15),
 
-            const SizedBox(height: 20),
+            // 2️⃣ DESCRIÇÃO (TEXTO DO POST)
+            TextField(
+              controller: descricaoController,
+              maxLines: 5, // ✅ Mais espaço para o texto real
+              decoration: const InputDecoration(
+                labelText: "O que você está pensando?",
+                hintText: "Escreva aqui o conteúdo do seu post...",
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 15),
 
-            /// CATEGORIA
+            // 3️⃣ CATEGORIA
             DropdownButtonFormField(
-              initialValue: categoriaSelecionada,
-              items: categorias.map((cat) {
-                return DropdownMenuItem(
-                  value: cat,
-                  child: Text(cat),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  categoriaSelecionada = value!;
-                });
-              },
-              decoration: const InputDecoration(
-                labelText: "Categoria",
-                border: OutlineInputBorder(),
-              ),
+              value: categoriaSelecionada,
+              items: categorias.map((cat) => DropdownMenuItem(value: cat, child: Text(cat.toUpperCase()))).toList(),
+              onChanged: (val) => setState(() => categoriaSelecionada = val.toString()),
+              decoration: const InputDecoration(labelText: "Categoria", border: OutlineInputBorder()),
             ),
-
+            const SizedBox(height: 15),
+            
+            // 4️⃣ LINK DA IMAGEM
+            TextField(
+              controller: urlController,
+              decoration: const InputDecoration(
+                labelText: "Link da Imagem (Opcional)",
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.link),
+              ),
+              onChanged: (val) {
+                if (val.isNotEmpty) setState(() => _imagemSelecionadaXFile = null);
+              },
+            ),
             const SizedBox(height: 20),
 
-            /// PREVIEW IMAGEM
-            _imagemSelecionadaXFile != null
+            /// PREVIEW DA IMAGEM
+            Container(
+              height: 180,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(12),
+                color: Colors.grey.shade50,
+              ),
+              child: _imagemSelecionadaXFile != null 
                 ? ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: kIsWeb
-                        ? Image.network(
-                            _imagemSelecionadaXFile!.path,
-                            height: 200,
-                            fit: BoxFit.cover,
-                          )
-                        : Image.file(
-                            _imagemSelecionadaFile!,
-                            height: 200,
-                            fit: BoxFit.cover,
-                          ),
+                    borderRadius: BorderRadius.circular(12),
+                    child: kIsWeb 
+                      ? Image.network(_imagemSelecionadaXFile!.path, fit: BoxFit.cover)
+                      : Image.file(_imagemSelecionadaFile!, fit: BoxFit.cover),
                   )
-                : Container(
-                    height: 200,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Center(
-                      child: Text("Nenhuma imagem selecionada"),
-                    ),
-                  ),
+                : const Center(child: Text("Nenhuma imagem selecionada")),
+            ),
 
-            const SizedBox(height: 10),
-
-            /// BOTÃO ESCOLHER IMAGEM
+            const SizedBox(height: 15),
             ElevatedButton.icon(
               onPressed: selecionarImagem,
-              icon: const Icon(Icons.image),
-              label: const Text("Selecionar imagem"),
+              icon: const Icon(Icons.add_a_photo),
+              label: const Text("Escolher Arquivo"),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.grey[200], 
+                foregroundColor: Colors.black87
+              ),
             ),
-
+            
             const SizedBox(height: 30),
 
-            /// BOTÃO PUBLICAR
+            // BOTÃO PUBLICAR
             SizedBox(
               width: double.infinity,
-              height: 50,
+              height: 55,
               child: ElevatedButton(
                 onPressed: _loading ? null : publicarPost,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
+                  backgroundColor: Colors.blueAccent,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                child: _loading
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : const Text(
-                        "Publicar",
-                        style: TextStyle(fontSize: 16),
-                      ),
+                child: _loading 
+                  ? const CircularProgressIndicator(color: Colors.white) 
+                  : const Text("PUBLICAR NO FEED", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
               ),
             ),
           ],
@@ -229,4 +214,3 @@ class _CreatePostPageState extends State<CreatePostPage> {
     );
   }
 }
-

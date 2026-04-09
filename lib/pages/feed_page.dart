@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../models/post.dart';
 import '../services/post_service.dart';
 import '../services/firestore_user_service.dart';
 import '../services/user_preferences_service.dart';
 import '../user/user_profile.dart';
-import '../data/mock_posts.dart';
 import 'algorithm_insights_page.dart';
 import '../algorithm_control_page.dart';
 import 'create_post_page.dart';
+import 'comments_page.dart';
 
 class FeedPage extends StatefulWidget {
   const FeedPage({super.key});
@@ -30,124 +31,78 @@ class _FeedPageState extends State<FeedPage> {
     carregarPreferencias();
   }
 
-  // --- 1. ALGORITMO: APRENDIZADO ATIVO ---
+  Future<void> carregarPreferencias() async {
+    Map<String, double>? prefs = await firestoreService.carregarPreferencias();
+    if (prefs == null || prefs.isEmpty) {
+      prefs = await UserPreferencesService.carregarPreferencias();
+    }
+
+    if (mounted && prefs != null) {
+      setState(() {
+        preferenciasUsuario = prefs!.map(
+            (k, v) => MapEntry(k.toLowerCase().trim(), v.toDouble()));
+      });
+    }
+  }
+
   void registrarInteresse(String categoria, String acao) {
-    final cat = categoria.toLowerCase();
+    final cat = categoria.toLowerCase().trim();
     setState(() {
       if (acao == "curtida") userProfile.registrarCurtida(cat);
-      if (acao == "comentario") userProfile.registrarVisualizacao(cat); 
-      
+      if (acao == "comentario") userProfile.registrarVisualizacao(cat);
       preferenciasUsuario[cat] = userProfile.calcularPreferencia(cat).clamp(0.0, 1.0);
     });
     UserPreferencesService.salvarPreferencias(preferenciasUsuario);
     firestoreService.salvarPreferencias(preferenciasUsuario);
   }
 
-  // --- 2. COMENTÁRIOS: PERSISTÊNCIA REAL NO FIRESTORE ---
-  void abrirModalComentario(Post post) {
-    final TextEditingController controller = TextEditingController();
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom, 
-          left: 20, right: 20, top: 20
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text("Comentar em: ${post.titulo}", style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            TextField(
-              controller: controller, 
-              decoration: const InputDecoration(
-                hintText: "Escreva algo...",
-                border: OutlineInputBorder(),
-              ), 
-              autofocus: true
-            ),
-            const SizedBox(height: 15),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () async {
-                  if (controller.text.isNotEmpty) {
-                    // MODIFICAÇÃO: Agora chama o serviço que salva no banco
-                    await postService.adicionarComentario(post.id, controller.text);
-                    
-                    setState(() {
-                      post.comentariosCount = (post.comentariosCount ?? 0) + 1;
-                      registrarInteresse(post.categoria, "comentario");
-                    });
-                    
-                    if (mounted) Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Comentário salvo!")));
-                  }
-                },
-                child: const Text("Enviar Comentário"),
-              ),
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // --- 3. CURTIDAS E BLOQUEIOS ---
-  void curtirPost(Post post) async {
-    await postService.curtirPost(post.id);
-    registrarInteresse(post.categoria, "curtida");
-    setState(() {
-      post.likes = (post.likes ?? 0) + 1;
-    });
-  }
-
-  void bloquearCategoria(String categoria) async {
-    final cat = categoria.toLowerCase();
-    setState(() {
-      categoriasBloqueadas.add(cat);
-      userProfile.bloquearCategoria(cat);
-      preferenciasUsuario[cat] = userProfile.calcularPreferencia(cat).clamp(0.0, 1.0);
-    });
-    await UserPreferencesService.salvarPreferencias(preferenciasUsuario);
-    try { await firestoreService.salvarPreferencias(preferenciasUsuario); } catch (_) {}
-  }
-
-  void excluirPost(String id) async {
-    await postService.excluirPost(id);
-    setState(() {}); 
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Post removido.")));
-  }
-
-  Future<void> carregarPreferencias() async {
-    Map<String, double>? prefs = await firestoreService.carregarPreferencias();
-    if (prefs == null || prefs.isEmpty) prefs = await UserPreferencesService.carregarPreferencias();
-    if (mounted) {
-      setState(() => preferenciasUsuario = prefs!.map((k, v) => MapEntry(k.toLowerCase(), v.toDouble())));
-    }
-  }
-
-  // --- 4. PROTEÇÃO DE IMAGENS QUEBRADAS ---
   Widget buildImage(String url) {
     return Container(
       height: 220,
       width: double.infinity,
-      color: Colors.grey[200],
-      child: url.isEmpty 
-        ? const Icon(Icons.image, color: Colors.grey, size: 50)
-        : Image.network(
-            url,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [Icon(Icons.broken_image, color: Colors.grey, size: 40), Text("Imagem indisponível")],
+      color: Colors.grey[300],
+      child: url.isEmpty || !url.startsWith('http')
+          ? const Icon(Icons.image_not_supported, color: Colors.grey, size: 50)
+          : Image.network(
+              url,
+              fit: BoxFit.cover,
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+              },
+              errorBuilder: (context, error, stackTrace) => Container(
+                color: Colors.grey[200],
+                child: const Icon(Icons.broken_image_outlined, color: Colors.grey, size: 40),
               ),
             ),
-          ),
+    );
+  }
+
+  void curtirPost(Post post) async {
+    await postService.curtirPost(post.id, post.categoria);
+    registrarInteresse(post.categoria, "curtida");
+    setState(() {
+      post.likes = post.likes + 1;
+    });
+  }
+
+  void bloquearCategoria(String categoria) {
+    final cat = categoria.toLowerCase().trim();
+    setState(() => categoriasBloqueadas.add(cat));
+    ScaffoldMessenger.of(context).removeCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Categoria $cat ocultada."),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: "Desfazer",
+          onPressed: () {
+            setState(() => categoriasBloqueadas.remove(cat));
+            ScaffoldMessenger.of(context).removeCurrentSnackBar();
+          },
+        ),
+      ),
     );
   }
 
@@ -156,8 +111,17 @@ class _FeedPageState extends State<FeedPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("FeedControl", style: TextStyle(fontWeight: FontWeight.bold)),
-        elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.blueAccent),
+            onPressed: () async {
+              await carregarPreferencias();
+              ScaffoldMessenger.of(context).removeCurrentSnackBar();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Algoritmo atualizado!"), duration: Duration(seconds: 1)),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.analytics_outlined),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AlgorithmInsightsPage(preferencias: preferenciasUsuario))),
@@ -169,32 +133,32 @@ class _FeedPageState extends State<FeedPage> {
               carregarPreferencias();
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.redAccent),
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+              if (mounted) Navigator.pushReplacementNamed(context, '/login');
+            },
+          ),
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () async {
-          await carregarPreferencias();
-          await Future.delayed(const Duration(milliseconds: 500));
-        },
+        onRefresh: () async => carregarPreferencias(),
         child: StreamBuilder<List<Post>>(
           stream: postService.getPosts(preferencias: preferenciasUsuario),
           builder: (context, snapshot) {
-            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+            if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+            if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("Nenhum post disponível."));
 
-            List<Post> posts = [...snapshot.data!, ...mockPosts];
-
-            // Filtros de Bloqueio
-            posts = posts.where((p) => !categoriasBloqueadas.contains(p.categoria.toLowerCase())).toList();
-
-            // --- 5. ORDENAÇÃO POR POPULARIDADE ---
-            posts.sort((a, b) => (b.likes ?? 0).compareTo(a.likes ?? 0));
+            final posts = snapshot.data!
+                .where((p) => !categoriasBloqueadas.contains(p.categoria.toLowerCase().trim()))
+                .toList();
 
             return ListView.builder(
-              physics: const AlwaysScrollableScrollPhysics(), 
+              padding: const EdgeInsets.only(bottom: 80),
               itemCount: posts.length,
               itemBuilder: (context, index) {
                 final post = posts[index];
-                final bool meuPost = post.id.length > 10; 
 
                 return Card(
                   margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -205,29 +169,63 @@ class _FeedPageState extends State<FeedPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       buildImage(post.imagem),
-                      ListTile(
-                        title: Text(post.titulo, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-                        subtitle: Text("Categoria: ${post.categoria.toUpperCase()}", style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.w600, fontSize: 12)),
-                        trailing: meuPost 
-                          ? IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent), onPressed: () => excluirPost(post.id)) 
-                          : null,
-                      ),
                       Padding(
-                        padding: const EdgeInsets.only(left: 8, right: 8, bottom: 12),
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // ✅ TÍTULO DO POST
+                            Text(
+                              post.titulo,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                            ),
+                            const SizedBox(height: 6),
+                            // ✅ DESCRIÇÃO / CONTEÚDO DO POST
+                            Text(
+                              post.descricao, // Verifique se no seu Model é 'descricao' ou 'conteudo'
+                              style: TextStyle(color: Colors.grey[800], fontSize: 14),
+                              maxLines: 4,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 12),
+                            // CATEGORIA E SCORE
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  post.categoria.toUpperCase(),
+                                  style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 10),
+                                ),
+                                Text(
+                                  "Score: ${post.score.toStringAsFixed(1)}",
+                                  style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         child: Row(
                           children: [
                             IconButton(icon: const Icon(Icons.favorite, color: Colors.red), onPressed: () => curtirPost(post)),
-                            Text("${post.likes ?? 0}", style: const TextStyle(fontWeight: FontWeight.bold)),
-                            const SizedBox(width: 20),
-                            IconButton(icon: const Icon(Icons.chat_bubble_outline), onPressed: () => abrirModalComentario(post)),
-                            Text("${post.comentariosCount ?? 0}"),
+                            Text("${post.likes}"),
+                            const SizedBox(width: 15),
+                            IconButton(
+                              icon: const Icon(Icons.chat_bubble_outline),
+                              onPressed: () {
+                                registrarInteresse(post.categoria, "comentario");
+                                Navigator.push(context, MaterialPageRoute(builder: (context) => CommentsPage(postId: post.id, categoria: post.categoria))).then((_) => carregarPreferencias());
+                              },
+                            ),
+                            Text("${post.comentariosCount}"),
                             const Spacer(),
                             IconButton(
-                              icon: const Icon(Icons.block, color: Colors.grey, size: 20), 
+                              icon: const Icon(Icons.block, size: 20, color: Colors.grey),
                               onPressed: () => bloquearCategoria(post.categoria),
-                              tooltip: "Bloquear categoria",
                             ),
-                            const SizedBox(width: 10),
                           ],
                         ),
                       ),
@@ -239,10 +237,9 @@ class _FeedPageState extends State<FeedPage> {
           },
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
         onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatePostPage())),
-        label: const Text("Novo Post"),
-        icon: const Icon(Icons.add),
+        child: const Icon(Icons.add),
       ),
     );
   }

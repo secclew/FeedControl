@@ -85,6 +85,8 @@ class AlgorithmInsightsPage extends StatelessWidget {
             }),
           ],
         ),
+
+        
       ),
     );
   }
