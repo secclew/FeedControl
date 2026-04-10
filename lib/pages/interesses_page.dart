@@ -1,6 +1,7 @@
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // importa para pegar o usuário logado
+import 'package:firebase_auth/firebase_auth.dart';
 
 class InteressesPage extends StatefulWidget {
   const InteressesPage({super.key});
@@ -22,28 +23,49 @@ class _InteressesPageState extends State<InteressesPage> {
     });
   }
 
+  /// ✅ CORREÇÃO: Salva como Mapa de Pesos para o Algoritmo funcionar
   Future<void> _salvarPreferencias() async {
-    if (_selecionados.isEmpty) return;
+    if (_selecionados.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selecione ao menos um interesse!')),
+      );
+      return;
+    }
 
-    final user = FirebaseAuth.instance.currentUser; // pega usuário logado
+    final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      // se não houver login, não salva
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Você precisa estar logado para salvar.')),
       );
       return;
     }
 
-    await FirebaseFirestore.instance
-        .collection('preferencias')
-        .doc(user.uid) // usa o UID como ID do documento
-        .set({
-      'categorias': _selecionados.toList(),
-    });
+    try {
+      // 1. Criamos um Mapa onde cada categoria selecionada vira um campo numérico
+      // Isso permite que o PostService faça o cálculo de score corretamente.
+      Map<String, double> pesosIniciais = {};
+      
+      for (String cat in _selecionados) {
+        // Atribuímos um peso alto (100.0) para que esses posts vençam o ranking inicial
+        pesosIniciais[cat.toLowerCase().trim()] = 100.0;
+      }
 
-    if (!mounted) return;
+      // 2. Salva no Firestore usando o UID do usuário
+      // O .set() com esses campos garante que o motor de ranking encontre os valores
+      await FirebaseFirestore.instance
+          .collection('preferencias')
+          .doc(user.uid)
+          .set(pesosIniciais);
 
-    Navigator.pushReplacementNamed(context, '/feed');
+      if (!mounted) return;
+
+      // 3. Navega para o feed já com o ranking calibrado
+      Navigator.pushReplacementNamed(context, '/feed');
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao salvar preferências: $e')),
+      );
+    }
   }
 
   @override
@@ -51,9 +73,18 @@ class _InteressesPageState extends State<InteressesPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Escolha seus interesses'),
+        centerTitle: true,
       ),
       body: Column(
         children: [
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              "Selecione os temas que você deseja ver no topo do seu feed:",
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+              textAlign: TextAlign.center,
+            ),
+          ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
@@ -66,13 +97,12 @@ class _InteressesPageState extends State<InteressesPage> {
 
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                   return const Center(
-                    child: Text('Nenhuma categoria encontrada'),
+                    child: Text('Nenhuma categoria encontrada no banco.'),
                   );
                 }
 
                 final categorias = snapshot.data!.docs.map((doc) {
                   final data = doc.data() as Map<String, dynamic>;
-
                   final categoria = data['categoria'] ?? '';
                   final label = data['label'] ?? categoria;
 
@@ -83,19 +113,30 @@ class _InteressesPageState extends State<InteressesPage> {
                 }).where((item) => item['categoria'] != '').toList();
 
                 return ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
                   itemCount: categorias.length,
                   itemBuilder: (context, index) {
                     final item = categorias[index];
                     final categoria = item['categoria']!;
                     final label = item['label']!;
 
-                    final selecionado =
-                        _selecionados.contains(categoria);
+                    final selecionado = _selecionados.contains(categoria);
 
-                    return CheckboxListTile(
-                      title: Text(label),
-                      value: selecionado,
-                      onChanged: (_) => _toggleCategoria(categoria),
+                    return Card(
+                      elevation: selecionado ? 4 : 1,
+                      color: selecionado ? Colors.blue.shade50 : Colors.white,
+                      child: CheckboxListTile(
+                        title: Text(
+                          label.toUpperCase(),
+                          style: TextStyle(
+                            fontWeight: selecionado ? FontWeight.bold : FontWeight.normal,
+                            color: selecionado ? Colors.blue.shade900 : Colors.black87,
+                          ),
+                        ),
+                        value: selecionado,
+                        activeColor: Colors.blueAccent,
+                        onChanged: (_) => _toggleCategoria(categoria),
+                      ),
                     );
                   },
                 );
@@ -103,10 +144,21 @@ class _InteressesPageState extends State<InteressesPage> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: ElevatedButton(
-              onPressed: _salvarPreferencias,
-              child: const Text('Continuar'),
+            padding: const EdgeInsets.all(20),
+            child: SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: ElevatedButton(
+                onPressed: _salvarPreferencias,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text(
+                  'CONTINUAR PARA O FEED',
+                  style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ),
             ),
           ),
         ],
@@ -114,6 +166,3 @@ class _InteressesPageState extends State<InteressesPage> {
     );
   }
 }
-
-
-

@@ -116,7 +116,6 @@ class _FeedPageState extends State<FeedPage> {
             icon: const Icon(Icons.refresh, color: Colors.blueAccent),
             onPressed: () async {
               await carregarPreferencias();
-              ScaffoldMessenger.of(context).removeCurrentSnackBar();
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text("Algoritmo atualizado!"), duration: Duration(seconds: 1)),
               );
@@ -168,27 +167,48 @@ class _FeedPageState extends State<FeedPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // --- CABEÇALHO DO CARD (APENAS LÁPIS E LIXEIRA) ---
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            // ✏️ LÁPIS
+                            IconButton(
+                              icon: const Icon(Icons.edit, color: Colors.blue, size: 22),
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => CreatePostPage(postParaEditar: post)),
+                              ),
+                            ),
+                            // 🗑️ LIXEIRA
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.red, size: 22),
+                              onPressed: () => postService.excluirPost(post.id),
+                            ),
+                          ],
+                        ),
+                      ),
+                      
                       buildImage(post.imagem),
+                      
                       Padding(
                         padding: const EdgeInsets.all(12.0),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // ✅ TÍTULO DO POST
                             Text(
                               post.titulo,
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                             ),
                             const SizedBox(height: 6),
-                            // ✅ DESCRIÇÃO / CONTEÚDO DO POST
                             Text(
-                              post.descricao, // Verifique se no seu Model é 'descricao' ou 'conteudo'
+                              post.descricao, 
                               style: TextStyle(color: Colors.grey[800], fontSize: 14),
                               maxLines: 4,
                               overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 12),
-                            // CATEGORIA E SCORE
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [

@@ -7,13 +7,11 @@ class PostService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   /// 🔥 CRIAR POST
-  /// Agora recebe [titulo] e [descricao] separadamente.
   Future<void> criarPost(String titulo, String descricao, String categoria, String imagem) async {
     try {
       String urlTratada = imagem.trim();
       String imagemFinal;
 
-      // Se a imagem estiver vazia, gera uma URL automática via Picsum
       if (urlTratada.isEmpty) {
         imagemFinal = "https://picsum.photos/600/400?random=${DateTime.now().millisecondsSinceEpoch}";
         developer.log("🤖 Imagem vazia. Gerando automática: $imagemFinal");
@@ -23,15 +21,16 @@ class PostService {
 
       await _firestore.collection('posts').add({
         'titulo': titulo.trim(),
-        'descricao': descricao.trim(), // ✅ Novo campo salvo no banco
-        'categoria': categoria.trim().toLowerCase(), 
+        'descricao': descricao.trim(),
+        'categoria': categoria.trim().toLowerCase(),
         'imagem': imagemFinal,
         'likes': 0,
         'comentariosCount': 0,
         'engajamento': 0.0,
         'timestamp': FieldValue.serverTimestamp(),
-        'autor': "Eduardo", // Aqui você pode trocar pelo nome do user logado futuramente
-        'avatar': "https://i.pravatar.cc/150?u=edu",
+        'autor': "Eduardo",
+        // Removido pravatar para evitar erros de carregamento no Web
+        'avatar': "", 
         'tempo': "Agora",
         'recencia': 1.0,
       });
@@ -39,6 +38,23 @@ class PostService {
       developer.log("✅ Post criado com sucesso!");
     } catch (e) {
       developer.log("Erro ao criar post", error: e, name: 'PostService');
+      rethrow;
+    }
+  }
+
+  /// ✏️ EDITAR POST EXISTENTE
+  Future<void> editarPost(String postId, String titulo, String descricao, String categoria, String imagem) async {
+    try {
+      await _firestore.collection('posts').doc(postId).update({
+        'titulo': titulo.trim(),
+        'descricao': descricao.trim(),
+        'categoria': categoria.trim().toLowerCase(),
+        'imagem': imagem.trim(),
+        'timestamp_editado': FieldValue.serverTimestamp(), 
+      });
+      developer.log("✅ Post $postId atualizado com sucesso!");
+    } catch (e) {
+      developer.log("Erro ao editar post", error: e, name: 'PostService');
       rethrow;
     }
   }
@@ -105,33 +121,36 @@ class PostService {
     }
   }
 
-  /// 🔥 MOTOR DE RANKING (Feed Inteligente)
+  /// 🔥 MOTOR DE RANKING (Feed Inteligente) - CORRIGIDO
   Stream<List<Post>> getPosts({Map<String, double>? preferencias}) {
     return _firestore.collection('posts').snapshots().map((snapshot) {
+      // 1. Converte os documentos para objetos Post usando o seu model protegido
       List<Post> todosPosts = snapshot.docs.map((doc) {
-        return Post.fromFirestore(doc.data(), doc.id);
+        return Post.fromFirestore(doc.data() as Map<String, dynamic>, doc.id);
       }).toList();
 
+      // 2. Se não houver preferências, ordena apenas por tempo (DateTime)
       if (preferencias == null || preferencias.isEmpty) {
         todosPosts.sort((a, b) => b.timestamp.compareTo(a.timestamp));
         return todosPosts;
       }
 
+      // 3. Aplica o cálculo do Score do seu algoritmo
       for (var post in todosPosts) {
         String catDoPost = _removerAcentos(post.categoria.trim().toLowerCase());
         double pesoInteresse = preferencias[catDoPost] ?? 0.0;
 
-        // FÓRMULA FEEDCONTROL
         double baseScore = (pesoInteresse * 1000.0);
         double socialScore = (post.engajamento * 5.0) + (post.likes * 0.1);
 
         post.score = baseScore + socialScore;
       }
 
+      // 4. Ordenação Final: Score primeiro, depois Timestamp
       todosPosts.sort((a, b) {
         int cmp = b.score.compareTo(a.score);
         if (cmp != 0) return cmp;
-        return b.timestamp.compareTo(a.timestamp);
+        return b.timestamp.compareTo(a.timestamp); // ✅ Comparação segura de DateTime
       });
 
       return todosPosts;
@@ -142,6 +161,7 @@ class PostService {
   Future<void> excluirPost(String id) async {
     try {
       await _firestore.collection('posts').doc(id).delete();
+      developer.log("✅ Post $id excluído.");
     } catch (e) {
       developer.log("Erro ao excluir", error: e, name: 'PostService');
     }
